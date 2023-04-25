@@ -10,6 +10,19 @@ Service_Config :: struct {
     host           : net.IP4_Address,
 }
 
+HTTP_codes :: enum {
+    Ok        = 200,
+    Created   = 201,
+    Not_Found = 404,
+}
+
+HTTP_Response :: struct {
+    status_code : HTTP_codes,
+    response_str: string,
+    content_type: string,
+    headers     : []string,
+}
+
 Server_Error :: enum {
     Accept_TCP_Error,
     Listen_TCP_Error,
@@ -35,25 +48,27 @@ serve :: proc(socket: net.TCP_Socket) -> Server_Error {
     return handle_connection(client)
 }
 
-build_response :: proc() -> string {
+build_response :: proc(response: HTTP_Response) -> string {
     allocator := context.allocator
-    msg := "HELLO_WORLD"
     string_builder := strings.builder_make_none(allocator)
     defer strings.builder_destroy(&string_builder)
 
     strings.write_string(&string_builder, "HTTP/1.1 ")
-    strings.write_int(&string_builder, 200)
+    strings.write_int(&string_builder, transmute(int)response.status_code)
     strings.write_string(&string_builder, " ")
 	strings.write_string(&string_builder, "\nContent-Length: ")
-	strings.write_int(&string_builder, len(msg))
+	strings.write_int(&string_builder, len(response.response_str))
 	strings.write_string(&string_builder, "\r\n\r\n")
-	strings.write_string(&string_builder, msg)
+	strings.write_string(&string_builder, response.response_str)
 	strings.write_string(&string_builder, "\n")
     return strings.clone(strings.to_string(string_builder))
 }
 
-
-send_response :: proc(client: net.TCP_Socket, buffer: []u8) -> Server_Error {
+send_response :: proc(client: net.TCP_Socket, message: []u8) -> Server_Error {
+    _, send_err := net.send_tcp(client, message[:])
+    if send_err != nil {
+        return Server_Error.Send_TCP_Error
+    }
     return nil
 }
 
@@ -65,15 +80,16 @@ handle_connection :: proc(client: net.TCP_Socket) -> Server_Error {
         return Server_Error.Receive_TCP_Error 
     }
 
-    str_message := build_response()
-    message := transmute([]u8)str_message
-
-    _, send_err := net.send_tcp(client, message[:])
-    if send_err != nil {
-        return Server_Error.Send_TCP_Error
+    http_response := HTTP_Response{
+        status_code=HTTP_codes.Ok,
+        response_str="HELLO_WORLD",
+        headers=[]string{},
+        content_type="application/json",
     }
 
-    fmt.println(transmute(string)message)
+    str_message := build_response(http_response)
+    message := transmute([]u8)str_message
+    send_response(client, message)
     return nil
 }
 
@@ -88,7 +104,6 @@ run :: proc(config: Service_Config) {
 
     for do serve(socket)
 }
-
 
 main :: proc() {
     server := Service_Config{
